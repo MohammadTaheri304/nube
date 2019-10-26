@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+option go_package = "rpc";
+
+service MapService {
+    rpc set(Message) returns (Message) {}
+    rpc get(Message) returns (Message) {}
+}
+
+message Message {
+    string key = 1;
+    string value = 2;
+}
