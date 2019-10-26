@@ -49,15 +49,25 @@ func startClientMode() {
 
 	start := time.Now()
 	wg := sync.WaitGroup{}
-	for i := 0; i < 250000; i++ {
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
 		go func(index int) {
-			_, err = client.Set(ctx, &rpc.Message{
-				Key:   "somethingsomethingsomething" + strconv.Itoa(index),
-				Value: "aaaaaaaa",
+			defer wg.Done()
+
+			_, err = client.Get(ctx, &rpc.Message{
+				Key: "somethingsomethingsomething",
 			})
 			if err != nil {
-				log.Fatalf("Error in set %v", err)
+				log.Fatalf("Error in get %v", err)
 			}
+
+			// _, err = client.Set(ctx, &rpc.Message{
+			// 	Key:   "somethingsomethingsomething" + strconv.Itoa(index),
+			// 	Value: "aaaaaaaa",
+			// })
+			// if err != nil {
+			// 	log.Fatalf("Error in set %v", err)
+			// }
 		}(i)
 	}
 	wg.Wait()
@@ -79,40 +89,44 @@ func startServerMode() {
 
 type MapService struct {
 	Data    *sync.Map
-	LogFile *os.File
+	Version int64
+	LogChan chan string
 }
 
 func NewMapService() *MapService {
 
+	chn := make(chan string)
+	go fileHandler(chn)
 	return &MapService{
-		Data: &sync.Map{},
+		Data:    &sync.Map{},
+		LogChan: chn,
+		Version: 0,
 	}
 }
 
-func main() {
+func fileHandler(fileChan chan string) {
 	f, err := os.Create("test.txt")
 	if err != nil {
-		fmt.Println(err)
-		return
+		log.Fatalf("Error in opening file %+v", err)
 	}
-	l, err := f.WriteString("Hello World")
-	if err != nil {
-		fmt.Println(err)
-		f.Close()
-		return
-	}
-	fmt.Println(l, "bytes written successfully")
-	err = f.Close()
-	if err != nil {
-		fmt.Println(err)
-		return
+
+	for {
+		req := <-fileChan
+		_, err := f.WriteString(req)
+		if err != nil {
+			log.Fatalf("Error in write into file %+v", err)
+		}
+		f.Sync()
 	}
 }
 
 func (m *MapService) Set(ctx context.Context, req *rpc.Message) (*rpc.Message, error) {
+	m.Version++
+	m.LogChan <- strconv.FormatInt(m.Version, 16) + " set " + req.Key + " " + req.Value + "\r\n"
 	m.Data.LoadOrStore(req.Key, req.Value)
 	return req, nil
 }
+
 func (m *MapService) Get(ctx context.Context, req *rpc.Message) (*rpc.Message, error) {
 	val, ok := m.Data.Load(req.Key)
 	if !ok {
