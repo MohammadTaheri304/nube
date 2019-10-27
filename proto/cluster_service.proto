@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+option go_package = "rpc";
+
+import "google/protobuf/empty.proto";
+
+service ClusterService {
+    rpc heartBeats(HeartBeatMessage) returns (HeartBeatMessage) {}
+    rpc leaderElection(LeaderElectionRequest) returns (LeaderElectionResponse) {}
+    rpc update(UpdateRequest) returns (google.protobuf.Empty) {}
+    rpc getChangeLog(changeLogRequest) returns (changeLogResponse) {}
+}
+
+message HeartBeatMessage {
+    string node = 1;
+    int64 version = 2;
+    string checksum = 3;
+}
+
+message LeaderElectionRequest{
+    string node = 1;
+}
+message LeaderElectionResponse{
+    bool accept = 1;
+}
+
+message UpdateRequest{
+    int64 version = 1;
+    string key = 2;
+    string value = 3;
+}
+
+message changeLogRequest{
+    int64 fromV = 1;
+    int64 toV = 2;
+}
+message changeLogResponse{
+    repeated UpdateRequest updates = 1;
+}
