@@ -8,25 +8,39 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/MohammadTaheri304/nube/cluster"
+	"github.com/MohammadTaheri304/nube/database"
 	"github.com/MohammadTaheri304/nube/rpc"
+	"github.com/MohammadTaheri304/nube/service"
 	"google.golang.org/grpc"
 )
 
 func main() {
+	address := os.Args[2]
 	if os.Args[1] == "client" {
 		fmt.Println("Client mode")
-		startClientMode()
+		startClientMode(address)
 	} else {
-		fmt.Println("Server mode")
-		startServerMode()
+		fmt.Println("Server mode. (server <listen-address(0.0.0.0:9090)> <nodeId(1)> <nodes(1-localhost:9090,2-localhost:9191)>)")
+		nodeId, _ := strconv.ParseInt(os.Args[3], 10, 64)
+		nodesString := os.Args[4]
+		nodes := make(map[int64]string)
+		for _, nodeString := range strings.Split(nodesString, ",") {
+			parts := strings.Split(nodeString, "-")
+			nodeId, _ := strconv.ParseInt(parts[0], 10, 64)
+			nodes[nodeId] = parts[1]
+		}
+		startServerMode(address, nodeId, nodes)
 	}
 }
 
-func startClientMode() {
-	connection, err := grpc.Dial("localhost:21212", grpc.WithInsecure())
+func startClientMode(address string) {
+	connection, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("Error in client %v", err)
 	}
@@ -47,7 +61,7 @@ func startClientMode() {
 
 	start := time.Now()
 	wg := sync.WaitGroup{}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10000; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -58,14 +72,6 @@ func startClientMode() {
 			if err != nil {
 				log.Fatalf("Error in get %v", err)
 			}
-
-			// _, err = client.Set(ctx, &rpc.Message{
-			// 	Key:   "somethingsomethingsomething" + strconv.Itoa(index),
-			// 	Value: "aaaaaaaa",
-			// })
-			// if err != nil {
-			// 	log.Fatalf("Error in set %v", err)
-			// }
 		}(i)
 	}
 	wg.Wait()
@@ -73,14 +79,18 @@ func startClientMode() {
 	fmt.Println("Total in " + time.Since(start).String())
 }
 
-func startServerMode() {
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", "0.0.0.0", 21212))
+func startServerMode(address string, nodeId int64, nodes map[int64]string) {
+	db := database.NewDatabase()
+	manager := cluster.NewClusterManager(nodeId, nodes)
+
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		log.Fatalf("Error in listener %+v", err)
 	}
 
 	server := grpc.NewServer()
-	rpc.RegisterMapServiceServer(server, NewMapService())
+	rpc.RegisterMapServiceServer(server, service.NewMapService(db, manager))
+	rpc.RegisterClusterServiceServer(server, cluster.NewClusterService(db, manager))
 
 	server.Serve(listener)
 }
