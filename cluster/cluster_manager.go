@@ -14,6 +14,7 @@ type ClusterManager struct {
 	LeaderId      int64
 	Nodes         map[int64]string
 	BeatResetChan chan int64
+	connectionMap map[int64]*grpc.ClientConn
 }
 
 func NewClusterManager(nodeId int64, nodes map[int64]string) *ClusterManager {
@@ -21,6 +22,7 @@ func NewClusterManager(nodeId int64, nodes map[int64]string) *ClusterManager {
 		NodeId:        nodeId,
 		Nodes:         nodes,
 		BeatResetChan: make(chan int64),
+		connectionMap: make(map[int64]*grpc.ClientConn),
 	}
 	go c.heartBeatCheck()
 	return c
@@ -30,40 +32,44 @@ func (c *ClusterManager) heartBeatCheck() {
 	for {
 		select {
 		case <-time.After(1 * time.Second):
-			log.Printf("Leader expired!")
 			// send leader election request
 			if c.NodeId != c.LeaderId {
-				c.sendLeaderElectionRequest()
+				log.Printf("Leader expired!")
+				go c.sendLeaderElectionRequest()
 			}
 		case beatFrom := <-c.BeatResetChan:
 			// reset timer
 			if _, ok := c.Nodes[beatFrom]; ok {
 				c.LeaderId = beatFrom
-				log.Printf("Leader is %+v", c.LeaderId)
+				//log.Printf("Leader is %+v", c.LeaderId)
 			}
 		}
 	}
 }
 
-func connectTo(host string) rpc.ClusterServiceClient {
-	connection, err := grpc.Dial(host, grpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("Error in client %v", err)
+func (c *ClusterManager) connectTo(nodeId int64) rpc.ClusterServiceClient {
+	if _, ok := c.connectionMap[nodeId]; !ok {
+		conn, err := grpc.Dial(c.Nodes[nodeId], grpc.WithInsecure())
+		if err != nil {
+			log.Printf("Error in client %v\n", err)
+		}
+		c.connectionMap[nodeId] = conn
 	}
-
-	return rpc.NewClusterServiceClient(connection)
+	conn, _ := c.connectionMap[nodeId]
+	//log.Println("Connection status is " + conn.GetState().String())
+	return rpc.NewClusterServiceClient(conn)
 }
 
 func (c *ClusterManager) sendLeaderElectionRequest() {
 	becameLeader := true
 	for k, v := range c.Nodes {
 		if k != c.NodeId {
-			con := connectTo(v)
+			con := c.connectTo(k)
 			response, err := con.LeaderElection(context.Background(), &rpc.LeaderElectionRequest{NodeId: c.NodeId})
 			if err != nil {
 				log.Printf("Error in send leader election request  to %+v:: %+v", v, err)
 			} else {
-				log.Printf("Result of leader request from %+v was %+v", v, response)
+				//log.Printf("Result of leader request from %+v was %+v", v, response)
 				becameLeader = becameLeader && response.Accept
 			}
 		}
@@ -76,26 +82,27 @@ func (c *ClusterManager) sendLeaderElectionRequest() {
 }
 
 func (c *ClusterManager) leaderShouldSendHeartBeat() {
-	for {
+	for i := 0; i < 25; i++ {
 		<-time.After(500 * time.Millisecond)
 		if c.NodeId != c.LeaderId {
 			return
 		}
 
-		for k, v := range c.Nodes {
+		for k, _ := range c.Nodes {
 			if k != c.NodeId {
-				con := connectTo(v)
+				con := c.connectTo(k)
 				//todo
 				con.HeartBeats(context.Background(), &rpc.HeartBeatMessage{NodeId: c.NodeId})
 			}
 		}
 	}
+	c.LeaderId = -1
 }
 
 func (c *ClusterManager) BroadCastUpdate(version int64, key, value string) {
 	for k, v := range c.Nodes {
 		if k != c.NodeId {
-			con := connectTo(v)
+			con := c.connectTo(k)
 			response, err := con.Update(context.Background(), &rpc.UpdateRequest{
 				Version: version,
 				Key:     key,
@@ -111,7 +118,7 @@ func (c *ClusterManager) BroadCastUpdate(version int64, key, value string) {
 }
 
 func (c *ClusterManager) SendUpdateToLeader(key, value string) {
-	con := connectTo(c.Nodes[c.LeaderId])
+	con := c.connectTo(c.LeaderId)
 	response, err := con.Update(context.Background(), &rpc.UpdateRequest{
 		Version: -1,
 		Key:     key,

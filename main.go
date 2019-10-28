@@ -61,7 +61,7 @@ func startClientMode(address string) {
 
 	start := time.Now()
 	wg := sync.WaitGroup{}
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 30000; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
